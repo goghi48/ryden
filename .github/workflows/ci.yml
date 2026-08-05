@@ -28,7 +28,7 @@ jobs:
     env:
       RYDEN_TEST_DATABASE_URL: postgres://ryden:ryden@localhost:5432/ryden_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -43,7 +43,7 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v5
         with:
           version: 11.9.0
