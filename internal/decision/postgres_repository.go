@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/goghi48/ryden/internal/database"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/ryden-app/ryden/internal/database"
 )
 
 type PostgresRepository struct {

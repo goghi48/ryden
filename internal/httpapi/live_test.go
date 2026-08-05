@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/ryden-app/ryden/internal/live"
+	"github.com/goghi48/ryden/internal/live"
 )
 
 func TestWriteMeetingEvent(t *testing.T) {

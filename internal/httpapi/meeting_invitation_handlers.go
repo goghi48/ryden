@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/goghi48/ryden/internal/meetinginvite"
 	"github.com/google/uuid"
-	"github.com/ryden-app/ryden/internal/meetinginvite"
 )
 
 func (s *Server) handleMeetingInviteCandidates(w http.ResponseWriter, r *http.Request) {

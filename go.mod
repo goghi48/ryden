@@ -1,4 +1,4 @@
-module github.com/ryden-app/ryden
+module github.com/goghi48/ryden
 
 go 1.26
 

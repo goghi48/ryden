@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/goghi48/ryden/internal/friendship"
 	"github.com/google/uuid"
-	"github.com/ryden-app/ryden/internal/friendship"
 )
 
 func (s *Server) handleUserSearch(w http.ResponseWriter, r *http.Request) {

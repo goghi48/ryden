@@ -8,8 +8,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/goghi48/ryden/internal/meeting"
 	"github.com/google/uuid"
-	"github.com/ryden-app/ryden/internal/meeting"
 )
 
 var (
