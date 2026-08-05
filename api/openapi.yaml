@@ -1,0 +1,2217 @@
+openapi: 3.1.0
+info:
+  title: Ryden API
+  version: 0.24.0
+  description: Authenticated coordination through either shared planning or a fixed plan, with a private friend address book that never grants meeting access by itself.
+servers:
+  - url: /api/v1
+paths:
+  /auth/register:
+    post:
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Account and session created.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Session created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401":
+          $ref: "#/components/responses/Problem"
+  /auth/refresh:
+    post:
+      operationId: refreshSession
+      responses:
+        "200":
+          description: Refresh session rotated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Session" }
+        "401":
+          $ref: "#/components/responses/Problem"
+  /auth/logout:
+    post:
+      operationId: logout
+      responses:
+        "204":
+          description: Session revoked.
+  /me:
+    get:
+      operationId: getCurrentUser
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Current user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updateCurrentUser
+      description: Replaces the editable profile fields for the authenticated user.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateProfileRequest" }
+      responses:
+        "200":
+          description: Updated current user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /me/avatar:
+    put:
+      operationId: putCurrentUserAvatar
+      summary: Replace the authenticated user's cropped profile photo.
+      description: Accepts a square JPEG or PNG no larger than 1 MiB and 1024 pixels per side.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: { type: string, format: binary, maxLength: 1048576 }
+          image/png:
+            schema: { type: string, format: binary, maxLength: 1048576 }
+      responses:
+        "200":
+          description: Avatar stored; changed is false for an identical replay.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvatarMutation" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteCurrentUserAvatar
+      summary: Remove the authenticated user's profile photo.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Avatar absent; changed is false when it was already absent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvatarMutation" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /users/{userID}/avatar:
+    get:
+      operationId: getUserAvatar
+      summary: Read a user's uploaded profile photo as an authenticated user.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: userID
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: revision
+          required: false
+          description: Cache-busting revision returned with the user representation.
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Uploaded avatar.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+  /users/search:
+    get:
+      operationId: searchUsersByNickname
+      description: Authenticated, bounded prefix search. Email addresses are never returned.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string, minLength: 3, maxLength: 24, pattern: "^[A-Za-z][A-Za-z0-9_]{2,23}$" }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 20, default: 20 }
+      responses:
+        "200":
+          description: Matching users and the current relationship state.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/FriendSearchItem" } }
+        "401": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /friends:
+    get:
+      operationId: getFriendsOverview
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Friends plus incoming and outgoing requests.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FriendsOverview" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /friend-requests:
+    post:
+      operationId: sendFriendRequest
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [user_id]
+              properties:
+                user_id: { type: string, format: uuid }
+      responses:
+        "201": { description: Request created, content: { application/json: { schema: { $ref: "#/components/schemas/ChangedMutation" } } } }
+        "200": { description: An equivalent relationship already exists, content: { application/json: { schema: { $ref: "#/components/schemas/ChangedMutation" } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /friend-requests/{requestID}:
+    parameters:
+      - in: path
+        name: requestID
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: acceptFriendRequest
+      description: Only the request addressee may accept it.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: Request accepted, content: { application/json: { schema: { $ref: "#/components/schemas/ChangedMutation" } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteFriendRequest
+      description: The requester may cancel and the addressee may decline a pending request.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Request removed. }
+        "404": { $ref: "#/components/responses/Problem" }
+  /friends/{friendID}:
+    delete:
+      operationId: removeFriend
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: friendID
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Friendship removed. }
+        "404": { $ref: "#/components/responses/Problem" }
+  /me/meeting-invitations:
+    get:
+      operationId: listIncomingMeetingInvitations
+      description: Returns only active pending invitations for the authenticated invitee.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Bounded pending invitation previews.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IncomingMeetingInvitationPage" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /me/meeting-invitations/{invitationID}:
+    parameters:
+      - in: path
+        name: invitationID
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      operationId: acceptMeetingInvitation
+      description: Atomically accepts the invitation and activates default participant membership.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Invitation accepted; repeated acceptance is a no-op.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingInvitationResponseMutation" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: declineMeetingInvitation
+      description: Declines without creating meeting membership.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Invitation declined; repeated decline is a no-op.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingInvitationResponseMutation" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+  /meetings:
+    get:
+      operationId: listMeetings
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Meetings available to the user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingPage" }
+    post:
+      operationId: createMeeting
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 8, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateMeetingRequest" }
+      responses:
+        "201":
+          description: Meeting created. A fixed meeting also receives its single plan and time option atomically.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meeting" }
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}:
+    get:
+      operationId: getMeeting
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: meetingID
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Meeting visible to the current user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingDetail" }
+        "404":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: updateMeeting
+      summary: Update owner-editable meeting details.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: meetingID
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateMeetingRequest" }
+      responses:
+        "200":
+          description: Meeting details updated. A scheduled fixed meeting may also update its selected time.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Meeting" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/friend-invitations:
+    get:
+      operationId: listMeetingFriendInvitationCandidates
+      description: Owner-only bounded accepted-friend list with participant and invitation states.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Accepted friends available to the owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingInviteCandidatePage" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: sendMeetingFriendInvitations
+      description: Creates at most one invitation per meeting/invitee and never creates membership.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [user_ids]
+              properties:
+                user_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Number of newly created pending invitations.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changed_count]
+                properties:
+                  changed_count: { type: integer, minimum: 0, maximum: 50 }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /meetings/{meetingID}/photo:
+    get:
+      operationId: getMeetingPhoto
+      summary: Read the private uploaded meeting photo.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/PhotoRevision"
+      responses:
+        "200":
+          description: Photo visible to an active meeting participant.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "304":
+          description: The participant already has the current photo bytes.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: putMeetingPhoto
+      summary: Upload or replace an owner-editable meeting photo.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/PhotoVersion"
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: { type: string, format: binary, maxLength: 3145728 }
+          image/png:
+            schema: { type: string, format: binary, maxLength: 3145728 }
+      responses:
+        "200":
+          description: Photo stored, or an identical retry accepted without a version change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhotoMutation" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteMeetingPhoto
+      summary: Remove the draft meeting photo.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/PhotoVersion"
+      responses:
+        "200":
+          description: Photo absent; changed is false when it was already absent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhotoMutation" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/calendar.ics:
+    get:
+      operationId: exportMeetingCalendar
+      summary: Download the confirmed meeting as an iCalendar event.
+      description: |
+        Available to authenticated active participants after a plan and compatible
+        time have been selected. Scheduled and completed meetings are exported;
+        drafts, collecting meetings, and cancelled meetings are rejected.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      responses:
+        "200":
+          description: A UTF-8 RFC 5545 calendar containing one confirmed event.
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            text/calendar:
+              schema:
+                type: string
+              example: |
+                BEGIN:VCALENDAR
+                VERSION:2.0
+                BEGIN:VEVENT
+                UID:0198fdb1-f28a-75e3-9098-9990ec503cb4@ryden.app
+                DTSTART:20260810T120000Z
+                DTEND:20260810T150000Z
+                SUMMARY:Ужин у Анны
+                STATUS:CONFIRMED
+                END:VEVENT
+                END:VCALENDAR
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/events:
+    get:
+      operationId: watchMeeting
+      summary: Watch an authorized meeting for version changes.
+      description: |
+        Opens a Server-Sent Events stream. `ready` reports the version authorized
+        for the connection and `meeting.updated` reports a newer version. Events
+        contain no meeting or participant payload; clients reload normal API
+        resources after receiving a newer version.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      responses:
+        "200":
+          description: Authorized meeting update stream.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "no-cache, no-transform" }
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: ready
+                data: {"version":12}
+
+                event: meeting.updated
+                data: {"version":13}
+
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/plan-options:
+    post:
+      operationId: addPlanOption
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddPlanOptionRequest" }
+      responses:
+        "201":
+          description: Plan option added to a draft.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanOption" }
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/plan-options/{optionID}:
+    put:
+      operationId: updatePlanOption
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/OptionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePlanOptionRequest" }
+      responses:
+        "200":
+          description: Draft plan option updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanOption" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deletePlanOption
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/OptionID"
+      responses:
+        "204":
+          description: Plan option is absent.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/plan-options/{optionID}/photo:
+    get:
+      operationId: getPlanOptionPhoto
+      summary: Read a private photo for a plan option or place.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/OptionID"
+        - $ref: "#/components/parameters/PhotoRevision"
+      responses:
+        "200":
+          description: Photo visible to an active meeting participant.
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+            image/png:
+              schema: { type: string, format: binary }
+        "304":
+          description: The participant already has the current photo bytes.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: putPlanOptionPhoto
+      summary: Upload or replace a draft plan option photo.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/OptionID"
+        - $ref: "#/components/parameters/PhotoVersion"
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema: { type: string, format: binary, maxLength: 3145728 }
+          image/png:
+            schema: { type: string, format: binary, maxLength: 3145728 }
+      responses:
+        "200":
+          description: Photo stored, or an identical retry accepted without a version change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhotoMutation" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deletePlanOptionPhoto
+      summary: Remove a draft plan option photo.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/OptionID"
+        - $ref: "#/components/parameters/PhotoVersion"
+      responses:
+        "200":
+          description: Photo absent; changed is false when it was already absent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PhotoMutation" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/time-options:
+    post:
+      operationId: addTimeOption
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddTimeOptionRequest" }
+      responses:
+        "201":
+          description: Time option added to a draft.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TimeOption" }
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/time-options/{optionID}:
+    put:
+      operationId: updateTimeOption
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/OptionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateTimeOptionRequest" }
+      responses:
+        "200":
+          description: Draft time option updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TimeOption" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteTimeOption
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/OptionID"
+      responses:
+        "204":
+          description: Time option is absent.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/invitations:
+    post:
+      operationId: createInvitation
+      description: Creates a seven-day invitation and revokes any prior active link.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateInvitationRequest" }
+      responses:
+        "201":
+          description: Invitation created. The raw secret is retained by the client only.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/invitation:
+    delete:
+      operationId: revokeInvitation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      responses:
+        "204":
+          description: Active invitation is revoked or was already absent.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /invitations/join:
+    post:
+      operationId: joinInvitation
+      description: Authenticated, idempotent membership creation using a secret from the URL fragment.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/JoinInvitationRequest" }
+      responses:
+        "200":
+          description: Current user is a participant of the meeting.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingDetail" }
+        "410":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/polls:
+    get:
+      operationId: listPolls
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      responses:
+        "200":
+          description: Polls with aggregate results and the current user's answers.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Poll" }
+        "404":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createPoll
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePollRequest" }
+      responses:
+        "201":
+          description: Generic poll created by an active participant in a draft, collecting, or scheduled meeting.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Poll" }
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/polls/{pollID}:
+    delete:
+      operationId: deletePoll
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/PollID"
+      responses:
+        "204":
+          description: Draft poll is absent.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /polls/{pollID}/vote:
+    put:
+      operationId: replacePollVote
+      description: Atomically replaces the current participant's complete answer; an empty list retracts it. Effective changes append a history snapshot, while the same option set is a no-op.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PollID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VotePollRequest" }
+      responses:
+        "204":
+          description: Answer stored. A no-op retry is accepted; a second effective answer conflicts when revoting is disabled.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /polls/{pollID}/history:
+    get:
+      operationId: listPollVoteHistory
+      description: Returns newest-first append-only answer changes for authenticated active meeting participants. Anonymous polls deliberately return not found.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/PollID"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 1000000, default: 0 }
+      responses:
+        "200":
+          description: Paginated answer history with option-label snapshots.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PollHistoryPage" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/polls/{pollID}/close:
+    post:
+      operationId: closePoll
+      description: Owner-only action that closes answers, optionally locking one selected option.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/PollID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ClosePollRequest" }
+      responses:
+        "204":
+          description: Poll closed, with or without a selected option.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/availability:
+    get:
+      operationId: getMeetingAvailability
+      description: Returns the full participant matrix and one plan-aware time recommendation per plan.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      responses:
+        "200":
+          description: Availability responses and deterministic recommendations.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AvailabilityView" }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /time-options/{timeOptionID}/availability:
+    put:
+      operationId: setTimeOptionAvailability
+      description: Creates, replaces, or clears the current participant's answer while the meeting is collecting.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/TimeOptionID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetAvailabilityRequest" }
+      responses:
+        "204":
+          description: Availability answer is in the requested state.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/attendance:
+    get:
+      operationId: getMeetingAttendance
+      description: Returns fixed-meeting attendance totals and a bounded named participant page.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Current going, not-going, and unanswered snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttendanceView" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: setMeetingAttendance
+      description: Replaces or clears the current participant's answer for a scheduled fixed meeting. Equal retries are no-ops.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetAttendanceRequest" }
+      responses:
+        "204":
+          description: Attendance answer is in the requested state.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/notes:
+    get:
+      operationId: listMeetingNotes
+      description: Returns a bounded newest-updated-first page of current participant notes to an active meeting participant.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Current notes and their authors.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingNotePage" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/notes/mine:
+    put:
+      operationId: upsertMyMeetingNote
+      description: Creates or replaces the authenticated participant's single current note. Equal retries are no-ops.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpsertMeetingNoteRequest" }
+      responses:
+        "200":
+          description: Note is in the requested state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangedMutation" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteMyMeetingNote
+      description: Removes the authenticated participant's note; deleting an absent note is a no-op.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      responses:
+        "200":
+          description: Note is absent.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChangedMutation" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/plan-votes:
+    get:
+      operationId: listPlanVotes
+      description: Returns current single-choice plan votes and a paginated append-only change history.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Current plan vote snapshot and history.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlanVotePage" }
+        "404":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/plan-vote:
+    put:
+      operationId: setPlanVote
+      description: Replaces or retracts the current participant's plan vote and appends history only when it changes.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetPlanVoteRequest" }
+      responses:
+        "204":
+          description: Current vote is in the requested state.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/decision:
+    post:
+      operationId: finalizeMeetingDecision
+      description: Owner-only atomic finalization of one plan and a compatible general or plan-scoped time.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FinalizeDecisionRequest" }
+      responses:
+        "200":
+          description: Meeting is scheduled with the selected pair.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FinalDecision" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/complete:
+    post:
+      operationId: completeMeeting
+      description: Owner-only atomic completion after every existing preparation requirement is completed. Repeated calls are idempotent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      responses:
+        "200":
+          description: Meeting is completed or was already completed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingCompletion" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/cancel:
+    post:
+      operationId: cancelMeeting
+      description: Owner-only atomic cancellation of a draft, collecting, or scheduled meeting. Active invitations are revoked and repeated calls are idempotent.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+      responses:
+        "200":
+          description: Meeting is cancelled or was already cancelled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MeetingCancellation" }
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/requirements:
+    get:
+      operationId: listRequirements
+      description: Returns a consistent preparation snapshot with quantities and assignees.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, maximum: 10000, default: 0 }
+      responses:
+        "200":
+          description: Preparation visible to an active meeting participant.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RequirementPage" }
+        "404":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createRequirement
+      description: Creates an owner-managed preparation requirement after scheduling.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRequirementRequest" }
+      responses:
+        "201":
+          description: Requirement created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Requirement" }
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/requirements/{requirementID}:
+    put:
+      operationId: updateRequirement
+      description: Owner-only rename or quantity change for an open requirement. The quantity cannot be lower than current claims.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/RequirementID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateRequirementRequest" }
+      responses:
+        "204":
+          description: Requirement is in the requested state.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteRequirement
+      description: Owner-only deletion of an open requirement that has no claims.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/RequirementID"
+      responses:
+        "204":
+          description: Empty requirement was deleted.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/requirements/{requirementID}/claim:
+    put:
+      operationId: setRequirementClaim
+      description: Replaces or retracts the current participant's own quantity claim.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/RequirementID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetRequirementClaimRequest" }
+      responses:
+        "204":
+          description: Claim is in the requested state.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /meetings/{meetingID}/requirements/{requirementID}/status:
+    put:
+      operationId: setRequirementStatus
+      description: Owner-only completion or reopening of a requirement.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/MeetingID"
+        - $ref: "#/components/parameters/RequirementID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SetRequirementStatusRequest" }
+      responses:
+        "204":
+          description: Requirement status is in the requested state.
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  responses:
+    Problem:
+      description: Structured application error.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Problem" }
+  parameters:
+    MeetingID:
+      in: path
+      name: meetingID
+      required: true
+      schema: { type: string, format: uuid }
+    RequirementID:
+      in: path
+      name: requirementID
+      required: true
+      schema: { type: string, format: uuid }
+    OptionID:
+      in: path
+      name: optionID
+      required: true
+      schema: { type: string, format: uuid }
+    PollID:
+      in: path
+      name: pollID
+      required: true
+      schema: { type: string, format: uuid }
+    TimeOptionID:
+      in: path
+      name: timeOptionID
+      required: true
+      schema: { type: string, format: uuid }
+    IdempotencyKey:
+      in: header
+      name: Idempotency-Key
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+    PhotoVersion:
+      in: query
+      name: version
+      required: true
+      description: Current meeting version used for optimistic concurrency.
+      schema: { type: integer, format: int64, minimum: 1 }
+    PhotoRevision:
+      in: query
+      name: revision
+      required: false
+      description: Optional client cache-busting meeting version; it does not change authorization or content.
+      schema: { type: integer, format: int64, minimum: 1 }
+  schemas:
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, display_name, nickname]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        password: { type: string, minLength: 10, maxLength: 128 }
+        display_name: { type: string, minLength: 1, maxLength: 80 }
+        nickname: { type: string, minLength: 3, maxLength: 24, pattern: "^[A-Za-z][A-Za-z0-9_]{2,23}$" }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    UpdateProfileRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name, nickname, avatar_url]
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 80 }
+        nickname: { type: string, minLength: 3, maxLength: 24, pattern: "^[A-Za-z][A-Za-z0-9_]{2,23}$" }
+        avatar_url:
+          type: [string, "null"]
+          format: uri
+          maxLength: 2048
+          deprecated: true
+          description: Legacy HTTPS avatar URL. New clients use /me/avatar and otherwise preserve or clear this field.
+    User:
+      type: object
+      required: [id, email, display_name, nickname, avatar_url, avatar_revision]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        display_name: { type: string }
+        nickname: { type: string }
+        avatar_url: { type: [string, "null"], format: uri }
+        avatar_revision: { type: [integer, "null"], format: int64, minimum: 1 }
+    FriendSearchItem:
+      type: object
+      required: [id, nickname, display_name, avatar_url, avatar_revision, relationship]
+      properties:
+        id: { type: string, format: uuid }
+        nickname: { type: string }
+        display_name: { type: string }
+        avatar_url: { type: [string, "null"], format: uri }
+        avatar_revision: { type: [integer, "null"], format: int64, minimum: 1 }
+        relationship: { type: string, enum: [none, outgoing, incoming, friend] }
+        request_id: { type: string, format: uuid }
+    FriendItem:
+      type: object
+      required: [request_id, user_id, nickname, display_name, avatar_url, avatar_revision, changed_at]
+      properties:
+        request_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        nickname: { type: string }
+        display_name: { type: string }
+        avatar_url: { type: [string, "null"], format: uri }
+        avatar_revision: { type: [integer, "null"], format: int64, minimum: 1 }
+        changed_at: { type: string, format: date-time }
+    FriendPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/FriendItem" } }
+        total: { type: integer, format: int64 }
+        limit: { type: integer }
+        offset: { type: integer }
+    FriendsOverview:
+      type: object
+      required: [friends, incoming, outgoing]
+      properties:
+        friends: { $ref: "#/components/schemas/FriendPage" }
+        incoming: { $ref: "#/components/schemas/FriendPage" }
+        outgoing: { $ref: "#/components/schemas/FriendPage" }
+    MeetingInviteCandidate:
+      type: object
+      required: [user_id, nickname, display_name, avatar_url, avatar_revision, invitation_id, invitation_status, is_participant]
+      properties:
+        user_id: { type: string, format: uuid }
+        nickname: { type: string }
+        display_name: { type: string }
+        avatar_url: { type: [string, "null"], format: uri }
+        avatar_revision: { type: [integer, "null"], format: int64, minimum: 1 }
+        invitation_id: { type: [string, "null"], format: uuid }
+        invitation_status: { type: [string, "null"], enum: [pending, accepted, declined, null] }
+        is_participant: { type: boolean }
+    MeetingInviteCandidatePage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/MeetingInviteCandidate" } }
+        total: { type: integer, format: int64 }
+        limit: { type: integer }
+        offset: { type: integer }
+    IncomingMeetingInvitation:
+      type: object
+      required: [id, meeting_id, meeting_title, owner_display_name, starts_at, ends_at, timezone, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        meeting_id: { type: string, format: uuid }
+        meeting_title: { type: string }
+        owner_display_name: { type: string }
+        starts_at: { type: [string, "null"], format: date-time }
+        ends_at: { type: [string, "null"], format: date-time }
+        timezone: { type: string }
+        created_at: { type: string, format: date-time }
+    IncomingMeetingInvitationPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/IncomingMeetingInvitation" } }
+        total: { type: integer, format: int64 }
+        limit: { type: integer }
+        offset: { type: integer }
+    MeetingInvitationResponseMutation:
+      type: object
+      required: [meeting_id, changed, joined]
+      properties:
+        meeting_id: { type: string, format: uuid }
+        changed: { type: boolean }
+        joined: { type: boolean }
+    Session:
+      type: object
+      required: [user, access_token, access_token_expires_at]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        access_token: { type: string }
+        access_token_expires_at: { type: string, format: date-time }
+    CreateMeetingRequest:
+      type: object
+      additionalProperties: false
+      required: [title, timezone]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000, default: "" }
+        event_type:
+          type: string
+          enum: [other, dinner, game_night, birthday, hike, trip]
+          default: other
+        coordination_mode:
+          type: string
+          enum: [planning, fixed]
+          default: planning
+          description: Immutable coordination route selected at creation.
+        cover_url:
+          type: [string, "null"]
+          format: uri
+          maxLength: 2048
+          deprecated: true
+          description: Legacy absolute HTTPS image URL. New clients upload a private meeting photo after creation.
+        location_name:
+          type: [string, "null"]
+          maxLength: 200
+        location_url:
+          type: [string, "null"]
+          format: uri
+          maxLength: 2048
+          description: Optional absolute HTTPS link to external location details. Omit or send null when the meeting has no link.
+        timezone: { type: string, example: Asia/Novosibirsk }
+        starts_at:
+          type: string
+          format: date-time
+          description: Required for a fixed meeting and aligned to a five-minute boundary; rejected for a planning meeting.
+        ends_at:
+          type: [string, "null"]
+          format: date-time
+          description: Optional fixed-meeting end derived from a duration between 1 minute and 30 days 23 hours 59 minutes; rejected for a planning meeting.
+    UpdateMeetingRequest:
+      type: object
+      additionalProperties: false
+      required: [title, description, event_type, cover_url, location_name, version]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 2000 }
+        event_type:
+          type: string
+          enum: [other, dinner, game_night, birthday, hike, trip]
+        cover_url:
+          type: [string, "null"]
+          format: uri
+          maxLength: 2048
+          deprecated: true
+          description: Legacy absolute HTTPS image URL retained for compatibility.
+        location_name:
+          type: [string, "null"]
+          maxLength: 200
+        location_url:
+          type: [string, "null"]
+          format: uri
+          maxLength: 2048
+          description: Optional absolute HTTPS link to external location details. Omit or send null to remove it.
+        starts_at:
+          type: [string, "null"]
+          format: date-time
+          description: Optional corrected start for a fixed meeting, aligned to a five-minute boundary.
+        ends_at:
+          type: [string, "null"]
+          format: date-time
+          description: Optional corrected end for a fixed meeting. Send null with starts_at to remove the duration.
+        version: { type: integer, format: int64, minimum: 1 }
+    Meeting:
+      type: object
+      required:
+        [id, owner_id, title, description, event_type, coordination_mode, cover_url, has_photo, location_name, location_url, timezone, state, version,
+         participant_role, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        owner_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        event_type: { type: string }
+        coordination_mode: { type: string, enum: [planning, fixed] }
+        cover_url: { type: [string, "null"], format: uri }
+        has_photo:
+          type: boolean
+          description: True when an authenticated meeting photo can be read from the photo endpoint.
+        location_name: { type: [string, "null"] }
+        location_url: { type: [string, "null"], format: uri }
+        timezone: { type: string }
+        state:
+          type: string
+          enum: [draft, collecting, scheduled, cancelled, completed]
+        selected_plan_option_id: { type: string, format: uuid }
+        selected_time_option_id: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        participant_role: { type: string, enum: [owner, participant] }
+        participant_joined_at:
+          type: string
+          format: date-time
+          description: Present in meeting-list responses and used for user-selected ordering.
+        selected_starts_at:
+          type: string
+          format: date-time
+          description: Selected meeting start, when a final time exists.
+        selected_ends_at:
+          type: string
+          format: date-time
+          description: Optional selected meeting end.
+        my_attendance_status:
+          allOf:
+            - $ref: "#/components/schemas/AttendanceStatus"
+          description: Present for fixed meetings in the authenticated user's meeting list.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MeetingPage:
+      type: object
+      required: [items, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Meeting" }
+        limit: { type: integer }
+        offset: { type: integer }
+    MeetingDetail:
+      allOf:
+        - $ref: "#/components/schemas/Meeting"
+        - type: object
+          required: [plan_options, time_options, participants]
+          properties:
+            plan_options:
+              type: array
+              items: { $ref: "#/components/schemas/PlanOption" }
+            time_options:
+              type: array
+              items: { $ref: "#/components/schemas/TimeOption" }
+            participants:
+              type: array
+              items: { $ref: "#/components/schemas/Participant" }
+            active_invitation_expires_at:
+              type: string
+              format: date-time
+              description: Visible only to the owner while an invitation is active.
+    AddPlanOptionRequest:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 500, default: "" }
+    UpdatePlanOptionRequest:
+      type: object
+      additionalProperties: false
+      required: [title, description, version]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, maxLength: 500 }
+        version: { type: integer, format: int64, minimum: 1 }
+    PlanOption:
+      type: object
+      required: [id, title, description, has_photo, position, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        has_photo:
+          type: boolean
+          description: True when an authenticated option photo can be read from the photo endpoint.
+        position: { type: integer, minimum: 0, maximum: 19 }
+        created_at: { type: string, format: date-time }
+    PhotoMutation:
+      type: object
+      required: [version, changed, updated_at]
+      properties:
+        version: { type: integer, format: int64, minimum: 1 }
+        changed:
+          type: boolean
+          description: False when an identical upload or deletion of an absent photo was replayed.
+        updated_at: { type: string, format: date-time }
+    AvatarMutation:
+      type: object
+      required: [avatar_revision, changed, updated_at]
+      properties:
+        avatar_revision: { type: [integer, "null"], format: int64, minimum: 1 }
+        changed:
+          type: boolean
+          description: False when an identical upload or deletion of an absent avatar was replayed.
+        updated_at: { type: string, format: date-time }
+    AddTimeOptionRequest:
+      type: object
+      additionalProperties: false
+      required: [starts_at]
+      properties:
+        plan_option_id:
+          type: [string, "null"]
+          format: uuid
+          description: Null or omitted means the time is general for every plan.
+        starts_at:
+          type: string
+          format: date-time
+          description: Absolute start aligned to a five-minute boundary.
+        ends_at:
+          type: [string, "null"]
+          format: date-time
+          description: Optional end; when present, duration is between 1 minute and 30 days 23 hours 59 minutes.
+    UpdateTimeOptionRequest:
+      type: object
+      additionalProperties: false
+      required: [plan_option_id, starts_at, ends_at, version]
+      properties:
+        plan_option_id:
+          type: [string, "null"]
+          format: uuid
+          description: Null means the time is general for every plan.
+        starts_at:
+          type: string
+          format: date-time
+          description: Absolute start aligned to a five-minute boundary.
+        ends_at:
+          type: [string, "null"]
+          format: date-time
+          description: Optional end; null removes the displayed duration.
+        version: { type: integer, format: int64, minimum: 1 }
+    TimeOption:
+      type: object
+      required: [id, starts_at, ends_at, position, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        plan_option_id:
+          type: string
+          format: uuid
+          description: Present only when the time is scoped to one plan option.
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: [string, "null"], format: date-time }
+        position: { type: integer, minimum: 0, maximum: 19 }
+        created_at: { type: string, format: date-time }
+    Participant:
+      type: object
+      required: [user_id, display_name, role, joined_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        role: { type: string, enum: [owner, participant] }
+        joined_at: { type: string, format: date-time }
+    AttendanceStatus:
+      type: string
+      enum: [going, maybe, not_going, unanswered]
+    SetAttendanceRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { $ref: "#/components/schemas/AttendanceStatus" }
+    AttendanceParticipant:
+      type: object
+      required: [user_id, display_name, role, status]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        role: { type: string, enum: [owner, participant] }
+        status: { $ref: "#/components/schemas/AttendanceStatus" }
+        updated_at: { type: string, format: date-time }
+    AttendanceView:
+      type: object
+      required:
+        [participant_count, going_count, maybe_count, not_going_count, unanswered_count,
+         my_status, participants, limit, offset]
+      properties:
+        participant_count: { type: integer, minimum: 0 }
+        going_count: { type: integer, minimum: 0 }
+        maybe_count: { type: integer, minimum: 0 }
+        not_going_count: { type: integer, minimum: 0 }
+        unanswered_count: { type: integer, minimum: 0 }
+        my_status: { $ref: "#/components/schemas/AttendanceStatus" }
+        participants:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/AttendanceParticipant" }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0, maximum: 10000 }
+    UpsertMeetingNoteRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, minLength: 1, maxLength: 200 }
+    MeetingNote:
+      type: object
+      required: [user_id, display_name, text, created_at, updated_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        text: { type: string, minLength: 1, maxLength: 200 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MeetingNotePage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/MeetingNote" }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0, maximum: 10000 }
+    ChangedMutation:
+      type: object
+      required: [changed]
+      properties:
+        changed: { type: boolean }
+    AvailabilityStatus:
+      type: string
+      enum: [preferred, available, if_needed, unavailable, unanswered]
+    SetAvailabilityRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { $ref: "#/components/schemas/AvailabilityStatus" }
+    AvailabilityView:
+      type: object
+      required: [weights, participants, items, recommendations]
+      properties:
+        weights:
+          type: object
+          required: [preferred, available, if_needed, unavailable, unanswered]
+          properties:
+            preferred: { type: integer, const: 3 }
+            available: { type: integer, const: 2 }
+            if_needed: { type: integer, const: 1 }
+            unavailable: { type: integer, const: -4 }
+            unanswered: { type: integer, const: 0 }
+        participants:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityParticipant" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityTime" }
+        recommendations:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityRecommendation" }
+    AvailabilityParticipant:
+      type: object
+      required: [user_id, display_name, role]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        role: { type: string, enum: [owner, participant] }
+    AvailabilityTime:
+      type: object
+      required:
+        [id, plan_option_id, starts_at, ends_at, position, my_status, counts,
+         responses, score]
+      properties:
+        id: { type: string, format: uuid }
+        plan_option_id: { type: [string, "null"], format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: [string, "null"], format: date-time }
+        position: { type: integer, minimum: 0, maximum: 19 }
+        my_status: { $ref: "#/components/schemas/AvailabilityStatus" }
+        counts: { $ref: "#/components/schemas/AvailabilityCounts" }
+        responses:
+          type: array
+          items: { $ref: "#/components/schemas/AvailabilityResponse" }
+        score: { type: integer }
+    AvailabilityCounts:
+      type: object
+      required: [preferred, available, if_needed, unavailable, unanswered]
+      properties:
+        preferred: { type: integer, minimum: 0 }
+        available: { type: integer, minimum: 0 }
+        if_needed: { type: integer, minimum: 0 }
+        unavailable: { type: integer, minimum: 0 }
+        unanswered: { type: integer, minimum: 0 }
+    AvailabilityResponse:
+      type: object
+      required: [user_id, status]
+      properties:
+        user_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [preferred, available, if_needed, unavailable]
+    AvailabilityRecommendation:
+      type: object
+      required:
+        [plan_option_id, plan_title, time_option_id, score, provisional, explanation]
+      properties:
+        plan_option_id: { type: string, format: uuid }
+        plan_title: { type: string }
+        time_option_id: { type: string, format: uuid }
+        score: { type: integer }
+        provisional: { type: boolean }
+        explanation: { type: string }
+    SetPlanVoteRequest:
+      type: object
+      additionalProperties: false
+      required: [plan_option_id]
+      properties:
+        plan_option_id:
+          type: [string, "null"]
+          format: uuid
+          description: Null retracts the current vote.
+    FinalizeDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [plan_option_id, time_option_id]
+      properties:
+        plan_option_id: { type: string, format: uuid }
+        time_option_id: { type: string, format: uuid }
+    FinalDecision:
+      type: object
+      required: [plan_option_id, time_option_id, state]
+      properties:
+        plan_option_id: { type: string, format: uuid }
+        time_option_id: { type: string, format: uuid }
+        state: { type: string, const: scheduled }
+    MeetingCompletion:
+      type: object
+      required: [meeting_id, state, version, updated_at]
+      properties:
+        meeting_id: { type: string, format: uuid }
+        state: { type: string, const: completed }
+        version: { type: integer, format: int64, minimum: 1 }
+        updated_at: { type: string, format: date-time }
+    MeetingCancellation:
+      type: object
+      required: [meeting_id, state, version, updated_at]
+      properties:
+        meeting_id: { type: string, format: uuid }
+        state: { type: string, const: cancelled }
+        version: { type: integer, format: int64, minimum: 1 }
+        updated_at: { type: string, format: date-time }
+    CreateRequirementRequest:
+      type: object
+      additionalProperties: false
+      required: [name, required_quantity]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        required_quantity: { type: integer, minimum: 1, maximum: 100000 }
+    UpdateRequirementRequest:
+      type: object
+      additionalProperties: false
+      required: [name, required_quantity]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        required_quantity:
+          type: integer
+          minimum: 1
+          maximum: 100000
+          description: Must be greater than or equal to the current claimed quantity.
+    SetRequirementClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [quantity]
+      properties:
+        quantity:
+          type: integer
+          minimum: 0
+          maximum: 100000
+          description: Zero retracts the current participant's claim.
+    SetRequirementStatusRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: { type: string, enum: [open, completed] }
+    RequirementPage:
+      type: object
+      required: [items, total, open_count, completed_count, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Requirement" }
+        total: { type: integer, minimum: 0, maximum: 50 }
+        open_count: { type: integer, minimum: 0, maximum: 50 }
+        completed_count: { type: integer, minimum: 0, maximum: 50 }
+        limit: { type: integer, minimum: 1, maximum: 50 }
+        offset: { type: integer, minimum: 0 }
+    Requirement:
+      type: object
+      required:
+        [id, name, required_quantity, claimed_quantity, remaining_quantity,
+         status, my_quantity, assignees, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        required_quantity: { type: integer, minimum: 1, maximum: 100000 }
+        claimed_quantity: { type: integer, minimum: 0, maximum: 100000 }
+        remaining_quantity: { type: integer, minimum: 0, maximum: 100000 }
+        status: { type: string, enum: [open, completed] }
+        my_quantity: { type: integer, minimum: 0, maximum: 100000 }
+        assignees:
+          type: array
+          items: { $ref: "#/components/schemas/RequirementAssignee" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RequirementAssignee:
+      type: object
+      required: [user_id, display_name, quantity, updated_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        quantity: { type: integer, minimum: 1, maximum: 100000 }
+        updated_at: { type: string, format: date-time }
+    PlanVotePage:
+      type: object
+      required:
+        [options, responses, history, participant_count, answered_count,
+         history_total, limit, offset]
+      properties:
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/PlanVoteOption" }
+        responses:
+          type: array
+          items: { $ref: "#/components/schemas/PlanVoteResponse" }
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/PlanVoteHistoryEntry" }
+        participant_count: { type: integer, minimum: 0 }
+        answered_count: { type: integer, minimum: 0 }
+        history_total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0 }
+    PlanVoteOption:
+      type: object
+      required: [id, title, description, position, vote_count, selected_by_user]
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        position: { type: integer, minimum: 0, maximum: 19 }
+        vote_count: { type: integer, minimum: 0 }
+        selected_by_user: { type: boolean }
+    PlanVoteResponse:
+      type: object
+      required: [user_id, display_name, plan_option_id, updated_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        plan_option_id: { type: string, format: uuid }
+        updated_at: { type: string, format: date-time }
+    PlanVoteHistoryEntry:
+      type: object
+      required:
+        [id, user_id, display_name, action, previous_plan_option_id,
+         previous_plan_title, new_plan_option_id, new_plan_title, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        action: { type: string, enum: [cast, change, retract] }
+        previous_plan_option_id: { type: [string, "null"], format: uuid }
+        previous_plan_title: { type: [string, "null"] }
+        new_plan_option_id: { type: [string, "null"], format: uuid }
+        new_plan_title: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+    CreateInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [secret]
+      properties:
+        secret:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: "^[A-Za-z0-9_-]{43}$"
+          description: Base64url encoding without padding of 32 cryptographically random bytes.
+    JoinInvitationRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: "^[A-Za-z0-9_-]{43}$"
+    Invitation:
+      type: object
+      required: [expires_at]
+      properties:
+        expires_at: { type: string, format: date-time }
+    CreatePollRequest:
+      type: object
+      additionalProperties: false
+      required: [question, response_mode, is_anonymous, allow_revote, options]
+      properties:
+        question: { type: string, minLength: 1, maxLength: 200 }
+        response_mode: { type: string, enum: [single, multiple] }
+        is_anonymous: { type: boolean }
+        allow_revote: { type: boolean }
+        deadline: { type: [string, "null"], format: date-time }
+        options:
+          type: array
+          minItems: 2
+          maxItems: 10
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 120 }
+    VotePollRequest:
+      type: object
+      additionalProperties: false
+      required: [option_ids]
+      properties:
+        option_ids:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          items: { type: string, format: uuid }
+    PollHistoryPage:
+      type: object
+      required: [items, total, limit, offset]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PollHistoryEntry" }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        offset: { type: integer, minimum: 0, maximum: 1000000 }
+    PollHistoryEntry:
+      type: object
+      required:
+        [id, user_id, display_name, action, previous_option_ids,
+         previous_option_labels, new_option_ids, new_option_labels, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        action: { type: string, enum: [cast, change, retract] }
+        previous_option_ids:
+          type: array
+          maxItems: 10
+          items: { type: string, format: uuid }
+        previous_option_labels:
+          type: array
+          maxItems: 10
+          items: { type: string }
+        new_option_ids:
+          type: array
+          maxItems: 10
+          items: { type: string, format: uuid }
+        new_option_labels:
+          type: array
+          maxItems: 10
+          items: { type: string }
+        created_at: { type: string, format: date-time }
+    ClosePollRequest:
+      type: object
+      additionalProperties: false
+      required: [selected_option_id]
+      properties:
+        selected_option_id: { type: [string, "null"], format: uuid }
+    Poll:
+      type: object
+      required:
+        [id, created_by_user_id, question, response_mode, is_anonymous, allow_revote,
+         can_manage, state, accepting_answers, options,
+         participant_count, respondent_count, total_selections, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        created_by_user_id: { type: string, format: uuid }
+        question: { type: string }
+        response_mode: { type: string, enum: [single, multiple] }
+        is_anonymous: { type: boolean }
+        allow_revote: { type: boolean }
+        can_manage: { type: boolean }
+        deadline: { type: string, format: date-time }
+        state: { type: string, enum: [open, closed] }
+        selected_option_id: { type: [string, "null"], format: uuid }
+        accepting_answers: { type: boolean }
+        options:
+          type: array
+          items: { $ref: "#/components/schemas/PollOption" }
+        participant_count: { type: integer, minimum: 1 }
+        respondent_count: { type: integer, minimum: 0 }
+        total_selections: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        closed_at: { type: string, format: date-time }
+    PollOption:
+      type: object
+      required: [id, label, position, vote_count, selected_by_user, voters]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string }
+        position: { type: integer, minimum: 0, maximum: 9 }
+        vote_count: { type: integer, minimum: 0 }
+        selected_by_user: { type: boolean }
+        voters:
+          type: array
+          description: Active participants who selected this option; always empty for an anonymous poll.
+          items: { $ref: "#/components/schemas/PollVoter" }
+    PollVoter:
+      type: object
+      required: [user_id, display_name, updated_at]
+      properties:
+        user_id: { type: string, format: uuid }
+        display_name: { type: string }
+        updated_at: { type: string, format: date-time }
+    Problem:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }

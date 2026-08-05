@@ -1,0 +1,48 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema:
+      - "internal/migrations/000001_initial.sql"
+      - "internal/migrations/000002_meeting_setup.sql"
+      - "internal/migrations/000003_generic_polls.sql"
+      - "internal/migrations/000004_time_option_plan_scope.sql"
+      - "internal/migrations/000005_availability.sql"
+      - "internal/migrations/000006_plan_decision.sql"
+      - "internal/migrations/000007_preparation.sql"
+      - "internal/migrations/000008_poll_closure.sql"
+      - "internal/migrations/000009_poll_vote_history.sql"
+      - "internal/migrations/000010_coordination_mode_attendance.sql"
+      - "internal/migrations/000011_meeting_photos.sql"
+      - "internal/migrations/000012_optional_time_duration.sql"
+      - "internal/migrations/000013_attendance_maybe.sql"
+      - "internal/migrations/000014_poll_privacy_and_revote.sql"
+      - "internal/migrations/000015_meeting_notes.sql"
+      - "internal/migrations/000016_nicknames_and_friendships.sql"
+      - "internal/migrations/000017_user_avatar_photos.sql"
+      - "internal/migrations/000018_meeting_friend_invitations.sql"
+    queries: "internal/database/queries"
+    gen:
+      go:
+        package: "database"
+        out: "internal/database"
+        sql_package: "pgx/v5"
+        emit_interface: true
+        emit_json_tags: true
+        emit_empty_slices: true
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
+              pointer: true
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
