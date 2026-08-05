@@ -29,7 +29,7 @@ jobs:
       RYDEN_TEST_DATABASE_URL: postgres://ryden:ryden@localhost:5432/ryden_test?sslmode=disable
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
